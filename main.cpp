@@ -1,7 +1,6 @@
 #include <iostream>
 #include <string>
 #include <array>
-#include <windows.h>
 #include <vector>
 #include <algorithm>
 #include <ctime>
@@ -10,6 +9,14 @@
 #include <iomanip>
 #include <unordered_map>
 #include <algorithm>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <dirent.h>
+#include <sys/stat.h>
+#endif
+
 
 extern "C"
 {
@@ -281,6 +288,7 @@ using StateMatrix = std::array<std::array<std::array<double, 3>, 2>, 9>; // I do
 // --- --- --- MISC UTILS --- --- --- [START]
 void loadAllKernels(const std::string& directory)
 {
+#ifdef _WIN32
     std::string search_path = directory + "\\*.*";
     WIN32_FIND_DATAA fd;
     HANDLE hFind = ::FindFirstFileA(search_path.c_str(), &fd);
@@ -299,7 +307,34 @@ void loadAllKernels(const std::string& directory)
     } while (::FindNextFileA(hFind, &fd));
 
     ::FindClose(hFind);
+#else
+    DIR* dir = opendir(directory.c_str());
+    if (!dir) {
+        std::cerr << "Unable to open directory: " << directory << '\n';
+        return;
+    }
+
+    struct dirent* entry;
+    while ((entry = readdir(dir)) != NULL) {
+        std::string filename = entry->d_name;
+
+        // Skip "." and ".."
+        if (filename == "." || filename == "..") {
+            continue;
+        }
+
+        std::string filepath = directory + "/" + filename;
+
+        struct stat path_stat;
+        if (stat(filepath.c_str(), &path_stat) == 0 && S_ISREG(path_stat.st_mode)) {
+            furnsh_c(filepath.c_str());
+        }
+    }
+
+    closedir(dir);
+#endif
 }
+
 
 std::string trim(const std::string& str) // trim trailing/leading whitespace, nothing fancy, stole it from somewhere
 {
@@ -739,21 +774,54 @@ std::tuple<std::string, std::string, std::vector<double>, Vec3, Vec3, double> re
     json j;
     infile >> j;
 
-    perm = j["permanent_designation"];
-    prov = j["provisional_designation"];
-    orbital_elements[0] = j["orbital_elements"]["a"] * AU;
-    orbital_elements[1] = j["orbital_elements"]["e"];
-    orbital_elements[2] = j["orbital_elements"]["i"];
-    orbital_elements[3] = j["orbital_elements"]["node"];
-    orbital_elements[4] = j["orbital_elements"]["peri"];
-    orbital_elements[5] = j["orbital_elements"]["M"];
-    p0.x = j["state_vectors"]["x"];
-    p0.y = j["state_vectors"]["y"];
-    p0.z = j["state_vectors"]["z"];
-    v0.x = j["state_vectors"]["vx"];
-    v0.y = j["state_vectors"]["vy"];
-    v0.z = j["state_vectors"]["vz"];
-    epoch_JD = j["epoch"];
+    if (j.contains("state_vectors"))
+    {
+        perm = j["permanent_designation"];
+        prov = j["provisional_designation"];
+        orbital_elements[0] = j["orbital_elements"]["a"] * AU;
+        orbital_elements[1] = j["orbital_elements"]["e"];
+        orbital_elements[2] = j["orbital_elements"]["i"];
+        orbital_elements[3] = j["orbital_elements"]["node"];
+        orbital_elements[4] = j["orbital_elements"]["peri"];
+        orbital_elements[5] = j["orbital_elements"]["M"];
+        p0.x = j["state_vectors"]["x"];
+        p0.y = j["state_vectors"]["y"];
+        p0.z = j["state_vectors"]["z"];
+        v0.x = j["state_vectors"]["vx"];
+        v0.y = j["state_vectors"]["vy"];
+        v0.z = j["state_vectors"]["vz"];
+        epoch_JD = j["epoch"];
+    }
+    else
+    {
+        p0.x = j["CAR"]["coefficient_values"][0] * AU;
+        p0.y = j["CAR"]["coefficient_values"][1] * AU;
+        p0.z = j["CAR"]["coefficient_values"][2] * AU;
+
+        v0.x = j["CAR"]["coefficient_values"][3] * AU / 86400;
+        v0.y = j["CAR"]["coefficient_values"][4] * AU / 86400;
+        v0.z = j["CAR"]["coefficient_values"][5] * AU / 86400;
+
+        epoch_JD = j["epoch_data"]["epoch"] + 2400000.0;
+
+        perm = j["designation_data"]["permid"];
+        prov = j["designation_data"]["packed_primary_provisional_designation"];
+
+        orbital_elements[0] = j["COM"]["coefficient_values"][0] / (1 - j["COM"]["coefficient_values"][1]) * AU;
+        orbital_elements[1] = j["COM"]["coefficient_values"][1];
+        orbital_elements[2] = j["COM"]["coefficient_values"][2];
+        orbital_elements[3] = j["COM"]["coefficient_values"][3];
+        orbital_elements[4] = j["COM"]["coefficient_values"][4];
+
+        // compute mean anomaly
+        double period = 2 * pi_c() * sqrt(orbital_elements[0] * orbital_elements[0] * orbital_elements[0] / 1.3271244004193938E+11); // [s]
+        double epoch_MJD = j["epoch_data"]["epoch"];
+        double peri_MJD = j["COM"]["peri_time"];
+
+        double M = 2 * pi_c() * (JDToEt(epoch_MJD + 2400000.0) - JDToEt(peri_MJD + 2400000.0)) / period;
+
+        orbital_elements[5] = rad2deg(std::fmod(M, 2 * pi_c()));
+    }
 
     std::cout << "Done.\n";
 
@@ -1056,7 +1124,7 @@ std::vector<Vec3> backpropagate(Vec3 p0, Vec3 v0, SpiceDouble date_init, SpiceDo
     if (dt >= 0)
     {
         dt = time_interval / 4;
-        while (dt > -10 * 86400)
+        while (dt < -10 * 86400)
         {
             dt /= 2;
         }
@@ -1411,12 +1479,12 @@ std::vector<std::vector<Vec3>> generateStateVectors(SpiceDouble t0, Vec3 p0, Vec
 void printHelpMsg()
 {
     std::cout << " === SPRO HELP ===\n\n";
-    std::cout << "SPRO is a state vector propagation software for minor planets in heliocentric orbit. It computes the position and velocity of a minor planet "
+    std::cout << "SPRO is a state vector propagation software for minor planets in Heliocentric orbit. It computes the position and velocity of a minor planet "
         << "between given dates at given intervals, or at distinct specific dates provided as input.\n\n";
 
     std::cout << "It requires a minor planet data file in JSON format and some SPICE kernels.\n\n";
 
-    std::cout << "The minimal invocation is merely 'spro' - this assumes defaults for all parameters, which are:\n\n";
+    std::cout << "The minimal invocation is merely 'spro' - this assumes defaults for all parameters, which are:\n";
     std::cout << "    Input data file: mp.json\n";
     std::cout << "    Target date and time: System time (right now)\n";
     std::cout << "    Ephemeris step size: 1 day (...which is irrelevant without a given date interval)\n";
