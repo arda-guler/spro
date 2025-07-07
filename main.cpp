@@ -834,7 +834,7 @@ std::tuple<std::string, std::string, std::vector<double>, Vec3, Vec3, double> re
         // compute mean anomaly
         double period = 2 * pi_c() * sqrt(orbital_elements[0] * orbital_elements[0] * orbital_elements[0] / 1.3271244004193938E+11); // [s]
         double epoch_MJD = j["epoch_data"]["epoch"];
-        double peri_MJD = j["COM"]["peri_time"];
+        double peri_MJD = j["COM"]["coefficient_values"][5];
 
         double M = 2 * pi_c() * (JDToEt(epoch_MJD + 2400000.0) - JDToEt(peri_MJD + 2400000.0)) / period;
 
@@ -1539,7 +1539,7 @@ void printHelpMsg()
 
 int main(int argc, char* argv[])
 {
-    std::cout << "SPRO v0.1.0\n\n";
+    std::cout << "SPRO v0.1.1\n\n";
 
     // default parameters
     std::string mp_path = "mp.json";
