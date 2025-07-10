@@ -796,40 +796,40 @@ std::tuple<std::string, std::string, std::vector<double>, Vec3, Vec3, double> re
     {
         perm = j["permanent_designation"];
         prov = j["provisional_designation"];
-        orbital_elements[0] = j["orbital_elements"]["a"] * AU;
-        orbital_elements[1] = j["orbital_elements"]["e"];
-        orbital_elements[2] = j["orbital_elements"]["i"];
-        orbital_elements[3] = j["orbital_elements"]["node"];
-        orbital_elements[4] = j["orbital_elements"]["peri"];
-        orbital_elements[5] = j["orbital_elements"]["M"];
-        p0.x = j["state_vectors"]["x"];
-        p0.y = j["state_vectors"]["y"];
-        p0.z = j["state_vectors"]["z"];
-        v0.x = j["state_vectors"]["vx"];
-        v0.y = j["state_vectors"]["vy"];
-        v0.z = j["state_vectors"]["vz"];
-        epoch_JD = j["epoch"];
+        orbital_elements[0] = (double)j["orbital_elements"]["a"] * AU;
+        orbital_elements[1] = (double)j["orbital_elements"]["e"];
+        orbital_elements[2] = (double)j["orbital_elements"]["i"];
+        orbital_elements[3] = (double)j["orbital_elements"]["node"];
+        orbital_elements[4] = (double)j["orbital_elements"]["peri"];
+        orbital_elements[5] = (double)j["orbital_elements"]["M"];
+        p0.x = (double)j["state_vectors"]["x"];
+        p0.y = (double)j["state_vectors"]["y"];
+        p0.z = (double)j["state_vectors"]["z"];
+        v0.x = (double)j["state_vectors"]["vx"];
+        v0.y = (double)j["state_vectors"]["vy"];
+        v0.z = (double)j["state_vectors"]["vz"];
+        epoch_JD = (double)j["epoch"];
     }
     else
     {
-        p0.x = j["CAR"]["coefficient_values"][0] * AU;
-        p0.y = j["CAR"]["coefficient_values"][1] * AU;
-        p0.z = j["CAR"]["coefficient_values"][2] * AU;
+        p0.x = (double)j["CAR"]["coefficient_values"][0] * AU;
+        p0.y = (double)j["CAR"]["coefficient_values"][1] * AU;
+        p0.z = (double)j["CAR"]["coefficient_values"][2] * AU;
 
-        v0.x = j["CAR"]["coefficient_values"][3] * AU / 86400;
-        v0.y = j["CAR"]["coefficient_values"][4] * AU / 86400;
-        v0.z = j["CAR"]["coefficient_values"][5] * AU / 86400;
+        v0.x = (double)j["CAR"]["coefficient_values"][3] * AU / 86400.0;
+        v0.y = (double)j["CAR"]["coefficient_values"][4] * AU / 86400.0;
+        v0.z = (double)j["CAR"]["coefficient_values"][5] * AU / 86400.0;
 
-        epoch_JD = j["epoch_data"]["epoch"] + 2400000.0;
+        epoch_JD = (double)j["epoch_data"]["epoch"] + 2400000.0;
 
         perm = j["designation_data"]["permid"];
         prov = j["designation_data"]["packed_primary_provisional_designation"];
 
-        orbital_elements[0] = j["COM"]["coefficient_values"][0] / (1 - j["COM"]["coefficient_values"][1]) * AU;
-        orbital_elements[1] = j["COM"]["coefficient_values"][1];
-        orbital_elements[2] = j["COM"]["coefficient_values"][2];
-        orbital_elements[3] = j["COM"]["coefficient_values"][3];
-        orbital_elements[4] = j["COM"]["coefficient_values"][4];
+        orbital_elements[0] = (double)j["COM"]["coefficient_values"][0] / (1 - (double)j["COM"]["coefficient_values"][1]) * AU;
+        orbital_elements[1] = (double)j["COM"]["coefficient_values"][1];
+        orbital_elements[2] = (double)j["COM"]["coefficient_values"][2];
+        orbital_elements[3] = (double)j["COM"]["coefficient_values"][3];
+        orbital_elements[4] = (double)j["COM"]["coefficient_values"][4];
 
         // compute mean anomaly
         double period = 2 * pi_c() * sqrt(orbital_elements[0] * orbital_elements[0] * orbital_elements[0] / 1.3271244004193938E+11); // [s]
@@ -839,6 +839,23 @@ std::tuple<std::string, std::string, std::vector<double>, Vec3, Vec3, double> re
         double M = 2 * pi_c() * (JDToEt(epoch_MJD + 2400000.0) - JDToEt(peri_MJD + 2400000.0)) / period;
 
         orbital_elements[5] = rad2deg(std::fmod(M, 2 * pi_c()));
+
+        // transform state vector from ecliptic to equatorial
+        SpiceDouble rot[3][3];
+        SpiceDouble et = JDToEt(epoch_MJD + 2400000.0);
+        pxform_c("ECLIPJ2000", "J2000", et, rot);
+
+        double p0_eclip_arr[3] = {p0.x, p0.y, p0.z};
+        double v0_eclip_arr[3] = {v0.x, v0.y, v0.z};
+
+        double p0_equ_arr[3];
+        double v0_equ_arr[3];
+
+        mxv_c(rot, p0_eclip_arr, p0_equ_arr);
+        mxv_c(rot, v0_eclip_arr, v0_equ_arr);
+
+        p0 = Vec3(p0_equ_arr[0], p0_equ_arr[1], p0_equ_arr[2]);
+        v0 = Vec3(v0_equ_arr[0], v0_equ_arr[1], v0_equ_arr[2]);
     }
 
     std::cout << "Done.\n";
@@ -1500,7 +1517,8 @@ void printHelpMsg()
     std::cout << "SPRO is a state vector propagation software for minor planets in Heliocentric orbit. It computes the position and velocity of a minor planet "
         << "between given dates at given intervals, or at distinct specific dates provided as input.\n\n";
 
-    std::cout << "It requires a minor planet data file in JSON format and some SPICE kernels.\n\n";
+    std::cout << "It requires a minor planet data file in JSON format and some SPICE kernels. The JSON file can be in mpc_orb format (as downloaded from MPC website) ";
+    std::cout << "or the output minor planet data file from MPFT.\n\n";
 
     std::cout << "The minimal invocation is merely 'spro' - this assumes defaults for all parameters, which are:\n";
     std::cout << "    Input data file: mp.json\n";
@@ -1539,7 +1557,7 @@ void printHelpMsg()
 
 int main(int argc, char* argv[])
 {
-    std::cout << "SPRO v0.1.1\n\n";
+    std::cout << "SPRO v0.2.0\n\n";
 
     // default parameters
     std::string mp_path = "mp.json";
